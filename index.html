@@ -433,6 +433,7 @@ CATATAN
   main{
     padding:16px 8px 70px; max-width:900px; margin:0 auto;
     display:grid; grid-template-columns:repeat(2,1fr); gap:10px;
+    align-items:start;
   }
   @media(max-width:340px){ main{grid-template-columns:1fr;} }
 
@@ -610,6 +611,13 @@ CATATAN
   .rank-cat{font-size:8px; color:var(--text-dim); margin-top:2px; letter-spacing:.2px; font-weight:600;}
   .rank-bar{height:5px; border-radius:20px; overflow:hidden; display:flex; background:var(--panel-hi); margin-top:6px; width:100%; border:1px solid var(--ink);}
   .rank-bar div{height:100%;}
+  .rank-spark{display:flex;align-items:flex-end;gap:2px;height:24px;margin-top:7px;}
+  .rank-spark-bar{flex:1;height:100%;position:relative;border-radius:2px;}
+  .rank-spark-bar.empty{border:1.2px dashed #cfc8b8;background:transparent;}
+  .rank-spark-bar.reached{border:1.2px solid var(--ink);background:var(--panel-hi);overflow:hidden;box-shadow:1px 1px 0 var(--ink);}
+  .rank-spark-bar.today{border-color:var(--ink);border-width:1.6px;}
+  .rank-spark-fill{position:absolute;left:0;right:0;bottom:0;background:var(--cyan);}
+  .rank-spark-bar.today .rank-spark-fill{background:var(--amber);}
   .rank-count{
     font-family:'Baloo 2',sans-serif; font-size:13px; font-weight:700; color:var(--ink);
     flex-shrink:0; width:26px; text-align:right;
@@ -697,6 +705,8 @@ const CAPACITY = 15;
 let THEME_DATA = {};
 let DYNAMIC_CATS = [];
 let firstLoadDone = false;
+let RANKING_DATA = [];
+let RANKING_TODAY = 1;
 
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function tagChip(cls,label){ return `<span class="tag ${cls}">${label}</span>`; }
@@ -708,6 +718,10 @@ function renderTags(it){
   if(it.stance==='dov') out+=tagChip('dov','DOVISH');
   if(it.inf==='hik-inf') out+=tagChip('hik','\u2191 INFLASI');
   if(it.inf==='dow-inf') out+=tagChip('dow','\u2193 INFLASI');
+  if(it.inf==='inflator-ringan') out+=tagChip('hik','\u2191 INFLASI RINGAN');
+  if(it.inf==='inflator-kuat') out+=tagChip('hik','\u2191\u2191 INFLASI KUAT');
+  if(it.inf==='deflator-ringan') out+=tagChip('dow','\u2193 INFLASI RINGAN');
+  if(it.inf==='deflator-kuat') out+=tagChip('dow','\u2193\u2193 INFLASI KUAT');
   return out;
 }
 
@@ -806,14 +820,18 @@ function renderCard(t, arr){
     <div class="card-head" data-toggle="${t.slug}">
       <div class="theme-name ${required?'required':''}">${esc(t.name)}</div>
       <div class="head-right">
-        <div class="count-badge ${arr.length>=CAPACITY?'full':''}">${arr.length}/${CAPACITY}</div>
+        <div class="count-badge ${arr.length>=CAPACITY?'full':''}">${arr.length}</div>
         <div class="chev">\u25bc</div>
       </div>
     </div>
     <div class="fill-bar"><div style="width:${pct}%"></div></div>
     <div class="card-body"><div class="slot-list">`;
-  for(let i=0;i<CAPACITY;i++){
-    html += arr[i] ? slotHtml(arr[i], i+1) : ghostSlot(i+1);
+  if(arr.length === 0){
+    html += `<div class="slot ghost"><div class="slot-content"><div class="slot-headline">Belum ada berita</div></div></div>`;
+  } else {
+    for(let i=0;i<arr.length;i++){
+      html += slotHtml(arr[i], i+1);
+    }
   }
   html += `</div></div></div>`;
   return html;
@@ -850,9 +868,8 @@ function renderAll(){
   });
   document.querySelectorAll('.card').forEach(card=>{
     const slug = card.id.replace('card-','');
-    if(THEME_DATA[slug] && THEME_DATA[slug].length>0){
-      card.classList.add('open');
-    }
+    const hasData = THEME_DATA[slug] && THEME_DATA[slug].length>0;
+    card.classList.toggle('open', hasData);
   });
 }
 
@@ -881,6 +898,8 @@ async function refresh(){
     });
 
     renderAll();
+    RANKING_DATA = data.ranking || [];
+    RANKING_TODAY = data.rankingToday || 1;
     setSyncStatus('ok', 'LIVE');
     document.getElementById('syncTime').textContent = 'Update: ' + (data.updated || '-');
     document.getElementById('checkpointChip').textContent = data.updated || '-';
@@ -898,31 +917,60 @@ async function refresh(){
   }
 }
 
-function renderRanking(){
-  const flat = [];
+function renderSparkline(days, todayIdx){
+  const reachedVals = days.slice(0, todayIdx);
+  const maxVal = Math.max(1, ...reachedVals);
+  let html = '<div class="rank-spark">';
+  for(let d=0; d<7; d++){
+    const dayNum = d+1;
+    if(dayNum > todayIdx){
+      html += `<div class="rank-spark-bar empty"></div>`;
+    } else {
+      const val = days[d];
+      const pct = val>0 ? Math.max(14, Math.round(val/maxVal*100)) : 4;
+      const isToday = dayNum === todayIdx;
+      html += `<div class="rank-spark-bar reached${isToday?' today':''}" title="Hari ${dayNum}: ${val}"><div class="rank-spark-fill" style="height:${pct}%"></div></div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function findThemeMetaForRanking(slug){
   const allCats = THEMES.concat(DYNAMIC_CATS);
-  allCats.forEach(cat=>{
-    cat.items.forEach(t=>{
-      const arr = THEME_DATA[t.slug] || [];
-      const pos = arr.filter(i=>i.impact==='pos-hig').length;
-      const neg = arr.filter(i=>i.impact==='neg-hig').length;
-      flat.push({name:t.name, cat:cat.cat, count:arr.length, pos, neg});
-    });
-  });
-  flat.sort((a,b)=> b.count - a.count);
+  for(const cat of allCats){
+    for(const t of cat.items){
+      if(t.slug === slug) return {name:t.name, cat:cat.cat};
+    }
+  }
+  const toTitle = s => s.split('-').map(w=> w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+  return {name:toTitle(slug), cat:'TEMA BARU (OTOMATIS)'};
+}
+
+function renderRanking(){
   const body = document.getElementById('rankBody');
-  body.innerHTML = flat.map((t,idx)=>{
-    const tot = t.pos+t.neg || 1;
-    const posPct = Math.round(t.pos/tot*100);
-    const isEmpty = t.count===0;
-    return `<div class="rank-row ${isEmpty?'empty-row':''}">
+  if(!RANKING_DATA.length){
+    body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--text-mid); font-size:11px;">Belum ada data ranking &mdash; menunggu berita pertama diklasifikasi.</div>`;
+    return;
+  }
+  body.innerHTML = RANKING_DATA.map((r,idx)=>{
+    const meta = findThemeMetaForRanking(r.slug);
+    const tot = r.total || 1;
+    const posPct = Math.round(r.pos/tot*100);
+    const pctLabel = r.percent===null ? 'BARU' : r.percent+'%';
+    const pctColor = r.percent===null ? 'var(--amber)' : (r.percent>=100 ? 'var(--cyan)' : 'var(--text-mid)');
+    return `<div class="rank-row">
       <div class="rank-pos">${idx+1}</div>
       <div class="rank-info">
-        <div class="rank-theme">${esc(t.name)}</div>
-        <div class="rank-cat">${esc(t.cat)}</div>
-        ${!isEmpty ? `<div class="rank-bar"><div style="width:${100-posPct}%;background:var(--mag)"></div><div style="width:${posPct}%;background:var(--cyan)"></div></div>` : ''}
+        <div class="rank-theme">${esc(meta.name)}</div>
+        <div class="rank-cat">${esc(meta.cat)}</div>
+        <div class="rank-bar"><div style="width:${100-posPct}%;background:var(--mag)"></div><div style="width:${posPct}%;background:var(--cyan)"></div></div>
+        ${renderSparkline(r.days, RANKING_TODAY)}
       </div>
-      <div class="rank-count">${t.count}</div>
+      <div class="rank-count" style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+        <span>${r.total}</span>
+        <span style="font-size:8px;font-weight:700;color:${pctColor};">${pctLabel}</span>
+      </div>
     </div>`;
   }).join('');
 }
@@ -964,4 +1012,4 @@ refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
 </script>
 </body>
-</html>
+  </html>
