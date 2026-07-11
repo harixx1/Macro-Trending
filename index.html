@@ -819,17 +819,17 @@ function groupBySlug(items){
   return map;
 }
 
-// deteksi slug yang muncul di data tapi di luar 30 daftar resmi, lalu
-// bikin kategori "TEMA BARU (OTOMATIS)" on-the-fly supaya tidak hilang
-function buildDynamicCats(groupedMap){
-  const knownSlugs = new Set();
-  THEMES.forEach(cat=> cat.items.forEach(t=> knownSlugs.add(t.slug)));
-  const extraSlugs = Object.keys(groupedMap).filter(s=> !knownSlugs.has(s));
-  if(extraSlugs.length === 0) return [];
-  const toTitle = s => s.split('-').map(w=> w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+// tema baru sekarang PERMANEN: sumbernya ThemeRegistry (customThemes dari
+// doGet), bukan lagi dari berita yang masih hidup di Sheet1. Jadi begitu
+// suatu tema pernah terdeteksi, kartunya tetap ada di dashboard walau
+// beritanya sudah ikut kehapus otomatis oleh retensi 2 hari di Sheet1.
+function buildDynamicCats(customThemes){
+  if(!customThemes || customThemes.length === 0) return [];
   return [{
     cat: 'TEMA BARU (OTOMATIS)',
-    items: extraSlugs.sort().map(slug=> ({slug, name: toTitle(slug)}))
+    items: customThemes
+      .map(t=> ({slug: t.slug, name: t.name}))
+      .sort((a,b)=> a.name.localeCompare(b.name))
   }];
 }
 
@@ -905,7 +905,7 @@ async function refresh(){
   try{
     const data = await fetchDashboardData();
     const grouped = groupBySlug(data.items || []);
-    DYNAMIC_CATS = buildDynamicCats(grouped);
+    DYNAMIC_CATS = buildDynamicCats(data.customThemes || []);
 
     const allSlugs = new Set(Object.keys(THEME_DATA));
     THEMES.forEach(cat=> cat.items.forEach(t=> allSlugs.add(t.slug)));
@@ -1038,4 +1038,4 @@ refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
 </script>
 </body>
-  </html>
+</html>
